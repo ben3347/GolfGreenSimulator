@@ -1,14 +1,10 @@
-function bankExample(angleDeg, speed, numBalls, mode, startLoc, isReplay)
+function bankExample(angleDeg, speed, numBalls, mode, startLoc, isReplay, showTrail)
     if nargin < 6
         isReplay = false;
     end
-% bankExample - Simulates golf putts in Manual or Ideal Finder mode
-% Inputs:
-%   angleDeg  - Launch angle in degrees (center)
-%   speed     - Launch speed (or center speed)
-%   numBalls  - Number of balls (for fan or grid)
-%   mode      - 'Manual' or 'Ideal Finder'
-%   startLoc  - 2-element vector [x; y] for start position
+    if nargin < 7
+        showTrail = false;
+    end
 
 %% Simulation setup
 if ~isReplay
@@ -37,12 +33,10 @@ if strcmp(mode, "Manual")
         spread = 10 * pi / 180;
         angles = linspace(angleRad + spread/2, angleRad - spread/2, numBalls)';
         speeds = repmat(speed, numBalls, 1);  % Column vector
-
     end
 else
-    % Ideal Finder Mode - grid of angles and speeds
-    angleSpread = 15; % degrees
-    speedSpread = 200; % speed range
+    angleSpread = 15;
+    speedSpread = 200;
     angleRange = linspace(angleDeg + angleSpread/2, angleDeg - angleSpread/2, numBalls);
     speedRange = linspace(speed + speedSpread/2, speed - speedSpread/2, numBalls);
     [A, S] = meshgrid(angleRange, speedRange);
@@ -57,12 +51,16 @@ else
     numParticles = length(angles);
 end
 
-angleVectors = [cos(angles)'; sin(angles)'];                     % [2 x N]
-startConditions = angleVectors .* repmat(speeds', 2, 1);         % [2 x N]
+angleVectors = [cos(angles)'; sin(angles)'];
+startConditions = angleVectors .* repmat(speeds', 2, 1);
 r = repmat(startLoc, 1, numParticles);
 rl = r - startConditions * dt;
 rstart = r;
 rlstart = rl;
+
+if showTrail
+    trailPoints = [];
+end
 
 %% Simulation loop
 i = 0; launchTicks = 80;
@@ -85,6 +83,10 @@ while sum(sum(r ~= rl))
                  (s < minSpeed) | (distToHole < holeRadius);
     r(:, haltBalls) = rl(:, haltBalls);
 
+    if showTrail && numParticles == 1
+        trailPoints(:, end+1) = r(:,1);
+    end
+
     if mod(i,10) == 0
         figure(1); clf
         surf(greenheight, 'edgecolor', 'none'); hold on;
@@ -92,21 +94,24 @@ while sum(sum(r ~= rl))
                          52,188,67;37,167,60;32,154,61;1,114,56;0,86,19]/255));
         set(gca, 'DataAspectRatio', [1 1 1])
 
-        % Identify which balls are in vs out of hole
         inHole = distToHole < holeRadius;
         visible = ~inHole;
 
-        % Plot white balls only if NOT in the hole
         if any(visible)
             scatter3(r(1,visible), r(2,visible), ...
                 3 + greenheight(sub2ind(size(greenheight), ...
                 floor(r(2,visible)), floor(r(1,visible)))), 'wo', 'filled');
         end
 
-        % Animate sink effect only for replays and for balls that went in
         if isReplay && any(inHole)
-            sinkZ = -5 * ones(1, sum(inHole));  % Drop them visually
+            sinkZ = -5 * ones(1, sum(inHole));
             scatter3(r(1,inHole), r(2,inHole), sinkZ, 'ko', 'filled');
+        end
+
+        if showTrail && exist('trailPoints', 'var') && size(trailPoints,2) > 1
+            trailZ = 3 + greenheight(sub2ind(size(greenheight), ...
+                floor(trailPoints(2,:)), floor(trailPoints(1,:))));
+            plot3(trailPoints(1,:), trailPoints(2,:), trailZ, 'r-', 'LineWidth', 2);
         end
 
         holeX = [holeLoc(1), holeLoc(1)];
@@ -121,10 +126,11 @@ end
 
 %% Output result
 finalDistance = distToHole(1);
+scaleFeetPerUnit = (4.25 / 12) / holeRadius;
+realDistance = finalDistance * scaleFeetPerUnit;
 
 if strcmp(mode, 'Manual') && numBalls == 1
     if isReplay
-        % Custom output for ideal replay
         fprintf('\nIdeal Putt Found:\n');
         fprintf('Angle: %.4f degrees\n', angles(1) * 180/pi);
         fprintf('Speed: %.4f units\n', speeds(1));
@@ -132,24 +138,20 @@ if strcmp(mode, 'Manual') && numBalls == 1
         if finalDistance < holeRadius
             fprintf('The ball went in the hole!\n');
         else
-            fprintf('The ball was %.4f units from the hole.\n', finalDistance);
+            fprintf('The ball was %.2f feet from the hole.\n', realDistance);
         end
         fprintf('Angle: %.4f degrees\n', angles(1) * 180/pi);
         fprintf('Speed: %.4f units\n', speeds(1));
     end
-
-
 elseif strcmp(mode, 'Manual')
-    % Multi-ball fan (optional): print central putt only
     centerIdx = ceil(numBalls / 2);
     if finalDistance < holeRadius
         fprintf('The ball went in the hole!\n');
     else
-        fprintf('The center ball was %.4f units from the hole.\n', finalDistance);
+        fprintf('The center ball was %.2f feet from the hole.\n', realDistance);
     end
     fprintf('Angle: %.4f degrees\n', angles(centerIdx) * 180/pi);
     fprintf('Speed: %.4f units\n', speeds(centerIdx));
-
 end
 
 %% Phase space visualization (Ideal Finder)
@@ -161,7 +163,6 @@ if strcmp(mode, 'Ideal Finder')
     set(h, 'AlphaData', dists < holeRadius);
     ylabel('Speed index'); xlabel('Angle index');
 
-    % Highlight best shot
     [~, bestIdx] = min(distToHole);
     bestAngle = angles(bestIdx);
     bestSpeed = speeds(bestIdx);
@@ -169,11 +170,8 @@ if strcmp(mode, 'Ideal Finder')
     fprintf('Angle: %.4f degrees\n', bestAngle * 180/pi);
     fprintf('Speed: %.4f units\n', bestSpeed);
 
-
-
-    % Replay best shot
     pause(1);
     fprintf('Replaying best shot...\n');
-    bankExample(bestAngle * 180/pi, bestSpeed, 1, 'Manual', startLoc, true);
+    bankExample(bestAngle * 180/pi, bestSpeed, 1, 'Manual', startLoc, true, true);
 end
 end
